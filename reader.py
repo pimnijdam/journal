@@ -1,50 +1,101 @@
+"""
+Module to read data streams per line.
+
+Supported inputs:
+    - raw
+    - json
+    - json timeseries (contains "date" and "value" field)
+
+Can produce the following generators:
+    - raw lines
+    - json objects
+    - (date,value) tuples
+Can produce the following output as non-generator:
+    - pandas
+"""
 import json
-from pandas import Series, DataFrame
+from pandas import DataFrame
 #To read data files
-import gzip
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, timedelta
 from dateutil import parser
 
-from pympler.asizeof import asizeof
+class Reader(object):
+    """
+    Reader class to read data streams.
+    """
+    def __init__(self, inputStream, begin=None, end=None):
+        """
+        Create reader.
 
-class Reader:
-    def __init__(self, fd, begin=None, end=None):
-        self.fd = fd
-        self.reset = True
-        self.begin=begin
-        self.end=end
+        Parameters
+        ----------
+        inputStream : file-like, anything that supports readlines or xreadlines.
+            Input is read from this inputStream with readlines or xreadlines.
+            If the end parameter is specified, the inputStream must be in
+            chronological order.
+        begin : datetime
+            Inclusive begin date. All values before this date will be discarded.
+        end : datetime
+            Inclusive end date. All values after this date will be discarded.
+        """
+        self.fd_ = inputStream
+        self.reset = False
+        self.begin = begin
+        self.end = end
 
     def setReset(self, reset=True):
+        """
+        Wether to start at the beginning of the stream before each read. Can be
+        used to read the same data multiple times. Can only be used if the
+        inputStream supports seek.
+        """
         self.reset = reset
-    
+
     def rawLines(self, n=None):
+        """
+        A generator that returns the first n lines.
+        """
         if self.reset:
-            self.fd.seek(0)
-        i=0
-        func = self.fd.readlines
-        if hasattr(self.fd, 'xreadlines'):
-                func = self.fd.readlines
+            self.fd_.seek(0)
+        i = 0
+        func = self.fd_.readlines
+        if hasattr(self.fd_, 'xreadlines'):
+            func = self.fd_.readlines
 
         for line in func():
             yield line
             i += 1
-            if n is not None and i >= n: return
+            if n is not None and i >= n:
+                return
 
     def rawJSON(self, n=None):
+        """
+        A generator that returns the first n json objects.
+        """
         if self.reset:
-            self.fd.seek(0)
-        i=0
-        func = self.fd.readlines
-        if hasattr(self.fd, 'xreadlines'):
-                func = self.fd.readlines
+            self.fd_.seek(0)
+        i = 0
+        func = self.fd_.readlines
+        if hasattr(self.fd_, 'xreadlines'):
+            func = self.fd_.readlines
         for line in func():
             yield json.loads(line)
             i += 1
-            if n is not None and i >= n: return
+            if n is not None and i >= n:
+                return
 
-    def pandas(self, n=None, includeSensors=None, excludeSensors=None, includeBurst=True):
+    def pandas(self, n=None, includeSensors=None, excludeSensors=None,
+            includeBurst=True):
         """
-            Import data into pandas.
+            Import data into pandas DataFrame.
+
+            Each row corresponds to a sensor value. Sensors are mapped to
+            columns in the following way. If the sensor has a single value,
+            then the column name is the sensor name.  If the sensor has a json
+            value, the json keys in the root are mapped to column names:
+            "<sensor>_<key>".  Burst sensor values are expanded into multiple
+            rows, with the column names derived from the "headers" key in the
+            root: "<sensor>_<header>".
 
             Parameters
             ----------
@@ -56,12 +107,16 @@ class Reader:
                 Whether to include burst sensors. (Default True).
         """
         if includeSensors is not None and excludeSensors is not None:
-                raise (ValueException("Only one of includeSensors and excludeSensors can be set!"))
+            raise (ValueError("Only one of includeSensors\
+                    and excludeSensors can be set!"))
         dates = []
         data = []
         total = DataFrame([])
         bufSize = 10000
         def writeBack():
+            """
+            Store buffered data and dates into total.
+            """
             #put buffer into DataFrame
             df = DataFrame(data, index=dates)
             #clear the buffer
@@ -79,13 +134,28 @@ class Reader:
                 continue
             if not includeBurst and "(burst-mode)" in sensor:
                 continue
+
+            date = datetime.fromtimestamp(row['date'])
+            if self.begin is not None and date < self.begin:
+                continue
+            if self.end is not None and date > self.end:
+                break
+
             value = row['value']
 
-            if "burst-mode" in sensor and "values" in value and "header" in value and "interval" in value:
+            if "burst-mode" in sensor and "values" in value and\
+               "header" in value and "interval" in value:
                 #append value for each row in burst
                 sensorName = sensor.replace("(burst-mode)","").strip()
-                names = ["{}_{}".format(sensorName,x.strip()).replace(' ','_') for x in value['header'].split(',')]
-                offset = datetime.fromtimestamp(row['date'])
+                names = []
+                for key in value['header'].split(','):
+                    keyName = key.strip().replace(' ', '_')
+                    names.append("{}_{}".format(sensorName, keyName))
+                if len(names) == 1:
+                    #Rather just use sensor name
+                    names = [sensorName]
+
+                offset = date
                 interval = timedelta(milliseconds=value['interval'])
                 cumTime = offset
                 for v in value['values']:
@@ -102,68 +172,33 @@ class Reader:
                     newKey = "{}_{}".format(sensor, key)
                     value[newKey] = value.pop(key)
                 data.append(row['value'])
-                dates.append(datetime.fromtimestamp(row['date']))
+                dates.append(date)
             else:
                 data.append({sensor:row['value']})
-                dates.append(datetime.fromtimestamp(row['date']))
+                dates.append(date)
 
             if len(data) > bufSize:
                 total = writeBack()
         total = writeBack()
-        print round(asizeof(total)/1024.0)
-        return total
-
-    def pandas_old(self, n=None, filterSensors=None):
-        """
-            Create pandas.
-            TODO: optimise memory usage as it uses A LOT
-        """
-        dates = {}
-        data = {}
-        for row in self.rawJSON(n):
-            sensor = row["sensor_name"]
-            if filterSensors != None and sensor not in filterSensors:
-                continue
-            if not sensor in data:
-                data[sensor] = []
-                dates[sensor] = []
-            value = row['value']
-            if isinstance(value, dict):
-                #prepend all keys with the sensor name and an underscore
-                for key in value.keys():
-                    newKey = "{}_{}".format(sensor, key)
-                    value[newKey] = value.pop(key)
-            data[sensor].append(row['value'])
-            dates[sensor].append(datetime.fromtimestamp(row['date']))
-        #Note, we cannot create a data frame at once since lengths don't match
-        dataframes = []
-        for sensor in data.keys():
-            columns = None
-            if isinstance(data[sensor][0], dict):
-                columns = None
-            else:
-                columns = [sensor]
-            df = DataFrame(data[sensor], index=dates[sensor], columns=columns)
-            dataframes.append(df)
-
-        if len(dataframes) == 0:
-            return DataFrame()
-        total = dataframes[0]
-        for df in dataframes[1:]:
-            total = total.join(df)
         return total
 
     def dateValuePairs(self, n=None):
-        for x in self.rawJSON(n):
-            (date,value) = (parser.parse(x['date']), x['value'])
+        """
+        A generator that returns the first n (date, value) tuples.
+        """
+        for row in self.rawJSON(n):
+            (date, value) = (parser.parse(row['date']), row['value'])
             #filter on date
             if self.begin is not None and date < self.begin:
-                    continue
+                continue
             if self.end is not None and date > self.end:
-                    return
+                return
 
-            yield (date,value)
+            yield (date, value)
 
     def dateJSONValuePairs(self, n=None):
+        """
+        A generator that returns the first n (date, jsonValue) tuples.
+        """
         for (date, value) in self.dateValuePairs(n):
             yield (date, json.loads(value))
