@@ -111,7 +111,7 @@ class Reader(object):
         if includeSensors is not None and excludeSensors is not None:
             raise (ValueError("Only one of includeSensors\
                     and excludeSensors can be set!"))
-		elif onlyFirstValueOfBurst and not includeBurst:
+        elif onlyFirstValueOfBurst and not includeBurst:
             raise (ValueError("onlyFirstValueOfBurst can only be used withi\
 					includeBurst=True"))
         dates = []
@@ -171,8 +171,8 @@ class Reader(object):
                     data.append(singleValue)
                     dates.append(cumTime)
                     cumTime += interval
-					if onlyFirstValueOfBurst:
-						break
+                    if onlyFirstValueOfBurst:
+                        break
             elif isinstance(value, dict):
                 #prepend all keys with the sensor name and an underscore
                 for key in value.keys():
