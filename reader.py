@@ -60,7 +60,7 @@ class Reader(object):
         i = 0
         func = self.fd_.readlines
         if hasattr(self.fd_, 'xreadlines'):
-            func = self.fd_.readlines
+            func = self.fd_.xreadlines
 
         for line in func():
             yield line
@@ -77,7 +77,7 @@ class Reader(object):
         i = 0
         func = self.fd_.readlines
         if hasattr(self.fd_, 'xreadlines'):
-            func = self.fd_.readlines
+            func = self.fd_.xreadlines
         for line in func():
             yield json.loads(line)
             i += 1
@@ -85,7 +85,7 @@ class Reader(object):
                 return
 
     def pandas(self, n=None, includeSensors=None, excludeSensors=None,
-            includeBurst=True):
+            includeBurst=True, onlyFirstValueOfBurst=False):
         """
             Import data into pandas DataFrame.
 
@@ -105,10 +105,15 @@ class Reader(object):
                 Don't import these sensors.
             includeBurst : boolean
                 Whether to include burst sensors. (Default True).
+            onlyFirstValueOfBurst : boolean
+                Whether to only use a single value (the first) instead of the whole burst. (Default False).
         """
         if includeSensors is not None and excludeSensors is not None:
             raise (ValueError("Only one of includeSensors\
                     and excludeSensors can be set!"))
+		elif onlyFirstValueOfBurst and not includeBurst:
+            raise (ValueError("onlyFirstValueOfBurst can only be used withi\
+					includeBurst=True"))
         dates = []
         data = []
         total = DataFrame([])
@@ -166,6 +171,8 @@ class Reader(object):
                     data.append(singleValue)
                     dates.append(cumTime)
                     cumTime += interval
+					if onlyFirstValueOfBurst:
+						break
             elif isinstance(value, dict):
                 #prepend all keys with the sensor name and an underscore
                 for key in value.keys():
