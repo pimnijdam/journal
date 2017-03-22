@@ -174,11 +174,16 @@ class Reader(object):
                     if onlyFirstValueOfBurst:
                         break
             elif isinstance(value, dict):
+
+
+
+
                 #prepend all keys with the sensor name and an underscore
-                for key in value.keys():
-                    newKey = "{}_{}".format(sensor, key)
-                    value[newKey] = value.pop(key)
-                data.append(row['value'])
+                tmp = {}
+                for (k,v) in value.items():
+                    newKey = "{}_{}".format(sensor, k)
+                    tmp[newKey] = v
+                data.append(tmp)
                 dates.append(date)
             else:
                 data.append({sensor:row['value']})
