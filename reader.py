@@ -174,10 +174,6 @@ class Reader(object):
                     if onlyFirstValueOfBurst:
                         break
             elif isinstance(value, dict):
-
-
-
-
                 #prepend all keys with the sensor name and an underscore
                 tmp = {}
                 for (k,v) in value.items():
